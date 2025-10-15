@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
@@ -21,10 +20,8 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 // --- Sender.net (email delivery via welcome automation) ---
 const SENDER_API_KEY = process.env.SENDER_API_KEY;
 const SENDER_GROUP_ID = process.env.SENDER_GROUP_ID; // Group that triggers the welcome email
-const USE_FETCHAPP = (process.env.USE_FETCHAPP || 'false').toLowerCase() === 'true';
 
 // Course details
-const DOWNLOAD_URL = 'https://learnlist.fetchapp.com/permalink/6c088fc7';
 const COURSE_TITLE = process.env.COURSE_TITLE || 'Your Course';
 
 // HTML escape helper for Telegram HTML parse_mode
@@ -32,130 +29,6 @@ const esc = (s = '') => String(s)
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;');
-
-// Helper to parse boolean strings
-function bool(v) { 
-  return String(v).toLowerCase() === 'true'; 
-}
-
-// Create SMTP transporter (reusable)
-function createTransporter() {
-  return nodemailer.createTransporter({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: bool(process.env.SMTP_SECURE || 'true'), // true for 465, false for 587
-    auth: { 
-      user: process.env.SMTP_USER, 
-      pass: process.env.SMTP_PASS 
-    }
-  });
-}
-
-// Test SMTP connection on startup
-async function testSMTPConnection() {
-  console.log('\n📧 Testing SMTP connection...');
-  console.log('==========================================');
-  console.log(`Host: ${process.env.SMTP_HOST}`);
-  console.log(`Port: ${process.env.SMTP_PORT || 465}`);
-  console.log(`User: ${process.env.SMTP_USER}`);
-  console.log(`Secure: ${bool(process.env.SMTP_SECURE || 'true')}`);
-  console.log('==========================================\n');
-
-  try {
-    const transporter = createTransporter();
-    await transporter.verify();
-    console.log('✅ SMTP CONNECTION SUCCESSFUL!');
-    console.log('✅ Email service is ready to send emails\n');
-    return true;
-  } catch (error) {
-    console.error('❌ SMTP CONNECTION FAILED!');
-    console.error('❌ Error:', error.message);
-    console.error('\n⚠️  Please check your SMTP credentials in .env file');
-    console.error('⚠️  Server will continue running but emails will NOT be sent!\n');
-    return false;
-  }
-}
-
-// SMTP email sender using Nodemailer
-async function sendDownloadEmailSMTP({ fullName, email, downloadUrl, reference, courseTitle }) {
-  console.log('\n📨 Attempting to send email...');
-  console.log(`   To: ${email}`);
-  console.log(`   Name: ${fullName}`);
-  console.log(`   Reference: ${reference}`);
-  
-  try {
-    const transporter = createTransporter();
-    
-    const safeName = (fullName || 'there').trim();
-    const subject = `${courseTitle}: Your download link (Order ${reference})`;
-
-    const html = `
-  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;line-height:1.6;color:#111">
-    <h2 style="margin:0 0 12px">Payment confirmed ✅</h2>
-    <p>Dear ${safeName},</p>
-    <p>Thanks for your purchase of <strong>${courseTitle}</strong>. Your download link is below:</p>
-    <p>
-      <a href="${downloadUrl}" 
-         style="background:#1a56db;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none;display:inline-block">
-        Download your course
-      </a>
-    </p>
-    <p>If the button above doesn't work, copy &amp; paste this link:<br>
-      <a href="${downloadUrl}">${downloadUrl}</a>
-    </p>
-    <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-    <p style="font-size:13px;color:#555">Order ref: <strong>${reference}</strong></p>
-    <p style="font-size:12px;color:#777">This is a transactional email sent automatically after your purchase.</p>
-  </div>`.trim();
-
-    const text = [
-      `Payment confirmed`,
-      ``,
-      `Dear ${safeName},`,
-      `Thanks for your purchase of ${courseTitle}.`,
-      `Download link: ${downloadUrl}`,
-      ``,
-      `Order ref: ${reference}`,
-    ].join('\n');
-
-    const info = await transporter.sendMail({
-      from: { 
-        name: process.env.FROM_NAME || 'Learnlist', 
-        address: process.env.FROM_EMAIL 
-      },
-      to: [{ name: safeName, address: email }],
-      subject,
-      text,
-      html,
-      headers: {
-        'X-Entity-Ref-ID': reference,       // helps threading
-        'X-Transactional': 'true'           // hint this is transactional
-      }
-    });
-
-    console.log('✅ EMAIL SENT SUCCESSFULLY!');
-    console.log(`   Message ID: ${info.messageId}`);
-    console.log(`   Response: ${info.response}`);
-    console.log(`   Accepted: ${info.accepted?.join(', ') || 'N/A'}`);
-    if (info.rejected?.length > 0) {
-      console.log(`   Rejected: ${info.rejected.join(', ')}`);
-    }
-    console.log('');
-    
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('❌ EMAIL SENDING FAILED!');
-    console.error(`   Error: ${error.message}`);
-    if (error.code) {
-      console.error(`   Error Code: ${error.code}`);
-    }
-    if (error.command) {
-      console.error(`   Command: ${error.command}`);
-    }
-    console.error('');
-    throw error; // Re-throw to handle in calling function
-  }
-}
 
 // Initialize Paystack transaction
 app.post('/api/initialize-payment', async (req, res) => {
@@ -261,6 +134,7 @@ app.get('/api/verify-payment/:reference', async (req, res) => {
     }
 });
 
+
 // Send conversion data to Telegram
 app.post('/api/send-telegram-notification', async (req, res) => {
     try {
@@ -316,27 +190,36 @@ Conversion Currency: NGN</pre>`
 // --- Idempotency cache for processed references (in-memory) ---
 const processedReferences = new Set();
 
-// Add a buyer to Sender list/group so their Welcome email goes out automatically
+// Add a buyer to Sender.net list/group so their Welcome email goes out automatically
 async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
+  console.log('\n📧 Adding subscriber to Sender.net...');
+  console.log(`   Email: ${email}`);
+  console.log(`   Name: ${fullName}`);
+  console.log(`   GCLID: ${gclid}`);
+  
   try {
     if (!SENDER_API_KEY || !SENDER_GROUP_ID) {
-      console.warn('Sender.net not configured (missing SENDER_API_KEY or SENDER_GROUP_ID). Skipping.');
+      console.warn('❌ Sender.net not configured (missing SENDER_API_KEY or SENDER_GROUP_ID). Skipping.');
       return { skipped: true };
     }
+
     const [first_name, ...rest] = String(fullName || '').trim().split(' ');
     const last_name = rest.join(' ') || '';
-    // Minimal, safe payload: email + name + group assignment.
-    // (Your Welcome workflow should be set to trigger on "Subscriber added to a group".)
-    await axios.post(
-      'https://api.sender.net/subscribers',
-      {
-        email,
-        first_name,
-        last_name,
-        groups: [SENDER_GROUP_ID],
-        // You can store extras as tags; create tags in Sender if you like.
-        tags: ['customer', 'paystack', gclid ? `gclid:${gclid}` : 'gclid:none']
-      },
+    
+    // Prepare payload for Sender.net API
+    const payload = {
+      email,
+      first_name,
+      last_name,
+      groups: [SENDER_GROUP_ID],
+      trigger_automation: true, // This will trigger the welcome email automation
+      tags: ['customer', 'paystack', gclid ? `gclid:${gclid}` : 'gclid:none']
+    };
+
+    console.log(`   Sending to Sender.net API...`);
+    const response = await axios.post(
+      'https://api.sender.net/v2/subscribers',
+      payload,
       {
         headers: {
           Authorization: `Bearer ${SENDER_API_KEY}`,
@@ -345,15 +228,26 @@ async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
         }
       }
     );
-    return { success: true };
+
+    console.log('✅ SENDER.NET SUCCESS!');
+    console.log(`   Status: ${response.status} ${response.statusText}`);
+    console.log(`   Response: ${JSON.stringify(response.data)}`);
+    console.log(`   Subscriber added to group: ${SENDER_GROUP_ID}`);
+    console.log(`   Welcome automation should trigger automatically\n`);
+    
+    return { success: true, data: response.data };
   } catch (err) {
-    // Log full API error body to help troubleshooting (401/404/etc)
-    console.error('Sender subscribe error:', err.response?.data || err.message);
+    console.error('❌ SENDER.NET FAILED!');
+    console.error(`   Status: ${err.response?.status || 'Unknown'}`);
+    console.error(`   Error: ${err.response?.data?.message || err.message}`);
+    console.error(`   Full Response: ${JSON.stringify(err.response?.data || {})}`);
+    console.error('');
     return { success: false, error: err.message };
   }
 }
 
-// --- Shared processor: send Telegram, add to Sender, optionally create FetchApp order ---
+
+// --- Shared processor: send Telegram, add to Sender.net ---
 async function handleSuccessfulPayment({
   reference,
   email,
@@ -375,7 +269,7 @@ async function handleSuccessfulPayment({
   }
 
   try {
-    // 1) Telegram (HTML, safely escaped)
+    // 1) Send Telegram notification
     console.log('\n📱 Sending Telegram notification...');
     const message = [
       '🎉 <b>NEW CONVERSION</b> 🎉',
@@ -409,49 +303,23 @@ Conversion Currency: ${esc(currency)}</pre>`
     console.log('✅ Telegram notification sent successfully');
 
     // 2) Add to Sender.net so the Welcome email (with download link) is sent automatically
-    await addSubscriberToSender({ email, fullName, gclid });
-
-    // 3) Optional: FetchApp (off by default; free plan returns 404)
-    if (USE_FETCHAPP) {
-      const nameParts = (fullName || '').trim().split(' ');
-      const firstName = nameParts[0] || 'Customer';
-      const lastName = nameParts.slice(1).join(' ') || 'Customer';
-      const fetchAuth = Buffer.from(`${FETCHAPP_KEY}:${FETCHAPP_TOKEN}`).toString('base64');
-      await axios.post(
-        `${FETCHAPP_URL}/api/v2/orders`,
-        {
-          order: {
-            vendor_id: reference,
-            first_name: firstName,
-            last_name: lastName,
-            email: email,
-            order_items: [{ sku: PRODUCT_SKU }],
-            send_email: true
-          }
-        },
-        {
-          headers: {
-            Authorization: `Basic ${fetchAuth}`,
-            'Content-Type': 'application/json',
-            Accept: 'application/json'
-          }
-        }
-      );
-    } else {
-      console.log('FetchApp disabled. Using Sender.net automation for delivery.');
-    }
+    const senderResult = await addSubscriberToSender({ email, fullName, gclid });
 
     processedReferences.add(reference);
     console.log('✅ Payment processing completed successfully!\n');
     
-    return { alreadyProcessed: false };
+    return { 
+      alreadyProcessed: false, 
+      senderSuccess: senderResult.success,
+      senderData: senderResult.data 
+    };
   } catch (error) {
     console.error('❌ Error during payment processing:', error.message);
     throw error;
   }
 }
 
-// --- New: Orchestrator endpoint the frontend calls from paycomplete.html ---
+// --- Orchestrator endpoint the frontend calls from paycomplete.html ---
 app.post('/api/process-order', async (req, res) => {
     try {
         const { email, fullName, reference, gclid, ipAddress, country } = req.body;
@@ -488,7 +356,7 @@ app.post('/api/process-order', async (req, res) => {
         return res.json({
             success: true,
             message: result.alreadyProcessed ? 'Already processed' : 'Processed',
-            emailSent: result.emailSent || false
+            senderSuccess: result.senderSuccess || false
         });
     } catch (error) {
         console.error('process-order error:', error.response?.data || error.message);
@@ -500,12 +368,13 @@ app.post('/api/process-order', async (req, res) => {
     }
 });
 
+
 // --- Enhanced webhook: also calls the shared processor (server-side fallback) ---
 app.post('/api/webhook/paystack', (req, res) => {
     try {
         const hash = crypto
             .createHmac('sha512', PAYSTACK_SECRET_KEY)
-            .update(JSON.stringify(req.body)) // works if body-parser hasn't altered key order
+            .update(JSON.stringify(req.body))
             .digest('hex');
 
         if (hash !== req.headers['x-paystack-signature']) {
@@ -564,21 +433,20 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Start server with SMTP test
-async function startServer() {
-    // Test SMTP connection before starting
-    await testSMTPConnection();
+// Start server
+app.listen(PORT, () => {
+    console.log('==========================================');
+    console.log(`🚀 Server is running on port ${PORT}`);
+    console.log(`🏥 Health check: http://localhost:${PORT}/api/health`);
+    console.log('==========================================\n');
     
-    app.listen(PORT, () => {
-        console.log('==========================================');
-        console.log(`🚀 Server is running on port ${PORT}`);
-        console.log(`🏥 Health check: http://localhost:${PORT}/api/health`);
-        console.log('==========================================\n');
-    });
-}
-
-// Start the server
-startServer().catch(error => {
-    console.error('Failed to start server:', error);
-    process.exit(1);
+    // Show Sender.net configuration status
+    if (SENDER_API_KEY && SENDER_GROUP_ID) {
+        console.log('✅ Sender.net configured');
+        console.log(`   Group ID: ${SENDER_GROUP_ID}`);
+    } else {
+        console.log('⚠️  Sender.net NOT configured');
+        console.log('   Please add SENDER_API_KEY and SENDER_GROUP_ID to .env file');
+    }
+    console.log('==========================================\n');
 });
