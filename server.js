@@ -21,6 +21,13 @@ const FETCHAPP_TOKEN = process.env.FETCHAPP_TOKEN;
 const FETCHAPP_URL = process.env.FETCHAPP_URL; // e.g., https://yourhandle.fetchapp.com
 const PRODUCT_SKU = process.env.PRODUCT_SKU; // Your product SKU in FetchApp
 
+// HTML escape helper for Telegram HTML parse_mode
+const esc = (s = '') => String(s)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
+
 // Initialize Paystack transaction
 app.post('/api/initialize-payment', async (req, res) => {
     try {
@@ -130,42 +137,42 @@ app.post('/api/send-telegram-notification', async (req, res) => {
     try {
         const { fullName, email, gclid, amount, reference, country, ip } = req.body;
 
-        // Format message for easy Google Ads upload
-        const message = `
-🎉 *NEW CONVERSION* 🎉
-
-*Customer Details:*
-Full Name: ${fullName}
-Email: ${email}
-
-*Transaction Details:*
-Amount: ₦${amount}
-Reference: ${reference}
-Country: ${country || 'NG'}
-IP Address: ${ip || 'N/A'}
-
-*Google Ads Data:*
-GCLID: ${gclid || 'direct'}
-Conversion Time: ${new Date().toISOString()}
-
-*For Google Ads Upload:*
-\`\`\`
-GCLID: ${gclid || 'direct'}
+// Format message for easy Google Ads upload (Telegram HTML)
+const message = [
+  '🎉 <b>NEW CONVERSION</b> 🎉',
+  '',
+  '<b>Customer Details:</b>',
+  `Full Name: ${esc(fullName)}`,
+  `Email: ${esc(email)}`,
+  '',
+  '<b>Transaction Details:</b>',
+  `Amount: ${esc('₦' + String(amount))}`,
+  `Reference: ${esc(reference)}`,
+  `Country: ${esc(country || 'NG')}`,
+  `IP Address: ${esc(ip || 'N/A')}`,
+  '',
+  '<b>Google Ads Data:</b>',
+  `GCLID: ${esc(gclid || 'direct')}`,
+  `Conversion Time: ${esc(new Date().toISOString())}`,
+  '',
+  '<b>For Google Ads Upload:</b>',
+  `<pre>GCLID: ${esc(gclid || 'direct')}
 Conversion Name: Purchase
-Conversion Time: ${new Date().toISOString()}
-Conversion Value: ${amount}
-Conversion Currency: NGN
-\`\`\`
-        `.trim();
+Conversion Time: ${esc(new Date().toISOString())}
+Conversion Value: ${esc(String(amount))}
+Conversion Currency: NGN</pre>`
+].join('\n');
 
-        await axios.post(
-            `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-            {
-                chat_id: TELEGRAM_CHAT_ID,
-                text: message,
-                parse_mode: 'Markdown'
-            }
-        );
+await axios.post(
+  `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+  {
+    chat_id: TELEGRAM_CHAT_ID,
+    text: message,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true
+  }
+);
+
 
         res.json({ success: true, message: 'Telegram notification sent' });
     } catch (error) {
@@ -251,42 +258,42 @@ async function handleSuccessfulPayment({
         return { alreadyProcessed: true };
     }
 
-    // 1) Send Telegram notification
-    const message = `
-🎉 *NEW CONVERSION* 🎉
-
-*Customer Details:*
-Full Name: ${fullName}
-Email: ${email}
-
-*Transaction Details:*
-Amount: ${currency} ${amountNaira}
-Reference: ${reference}
-Country: ${country}
-IP Address: ${ipAddress}
-
-*Google Ads Data:*
-GCLID: ${gclid}
-Conversion Time: ${new Date().toISOString()}
-
-*For Google Ads Upload:*
-\`\`\`
-GCLID: ${gclid}
+   // 1) Send Telegram notification (HTML + escaped values)
+const message = [
+  '🎉 <b>NEW CONVERSION</b> 🎉',
+  '',
+  '<b>Customer Details:</b>',
+  `Full Name: ${esc(fullName)}`,
+  `Email: ${esc(email)}`,
+  '',
+  '<b>Transaction Details:</b>',
+  `Amount: ${esc(`${currency} ${amountNaira}`)}`,
+  `Reference: ${esc(reference)}`,
+  `Country: ${esc(country)}`,
+  `IP Address: ${esc(ipAddress)}`,
+  '',
+  '<b>Google Ads Data:</b>',
+  `GCLID: ${esc(gclid)}`,
+  `Conversion Time: ${esc(new Date().toISOString())}`,
+  '',
+  '<b>For Google Ads Upload:</b>',
+  `<pre>GCLID: ${esc(gclid)}
 Conversion Name: Purchase
-Conversion Time: ${new Date().toISOString()}
-Conversion Value: ${amountNaira}
-Conversion Currency: ${currency}
-\`\`\`
-`.trim();
+Conversion Time: ${esc(new Date().toISOString())}
+Conversion Value: ${esc(String(amountNaira))}
+Conversion Currency: ${esc(currency)}</pre>`
+].join('\n');
 
-    await axios.post(
-        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
-            chat_id: TELEGRAM_CHAT_ID,
-            text: message,
-            parse_mode: 'Markdown'
-        }
-    );
+await axios.post(
+  `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+  {
+    chat_id: TELEGRAM_CHAT_ID,
+    text: message,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true
+  }
+);
+
 
     // 2) Create FetchApp order (sends email with download link automatically)
     const nameParts = (fullName || '').trim().split(' ');
