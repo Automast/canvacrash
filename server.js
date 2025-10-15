@@ -27,6 +27,12 @@ const esc = (s = '') => String(s)
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;');
 
+// XML escape helper for FetchApp v2 XML payloads
+const escXml = (s = '') => String(s)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
 
 // Initialize Paystack transaction
 app.post('/api/initialize-payment', async (req, res) => {
@@ -195,32 +201,33 @@ app.post('/api/create-fetchapp-order', async (req, res) => {
         const firstName = nameParts[0] || 'Customer';
         const lastName = nameParts.slice(1).join(' ') || 'Customer';
 
-        // Create FetchApp order (using v2 API)
+        // Create FetchApp order (using v2 API with XML)
         const fetchAppAuth = Buffer.from(`${FETCHAPP_KEY}:${FETCHAPP_TOKEN}`).toString('base64');
 
-        const orderData = {
-            order: {
-                vendor_id: reference,
-                first_name: firstName,
-                last_name: lastName,
-                email: email,
-                order_items: [
-                    {
-                        sku: PRODUCT_SKU
-                    }
-                ],
-                send_email: true // FetchApp will send the download email
-            }
-        };
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<order>
+  <vendor_id>${escXml(reference)}</vendor_id>
+  <first_name>${escXml(firstName)}</first_name>
+  <last_name>${escXml(lastName)}</last_name>
+  <email>${escXml(email)}</email>
+  <currency>NGN</currency>
+  <send_email>true</send_email>
+  <order_items>
+    <order_item>
+      <sku>${escXml(PRODUCT_SKU)}</sku>
+      <quantity>1</quantity>
+    </order_item>
+  </order_items>
+</order>`;
 
         const fetchAppResponse = await axios.post(
-            `${FETCHAPP_URL}/api/v2/orders`,
-            orderData,
+            `${FETCHAPP_URL}/api/v2/orders/create.xml`,
+            xml,
             {
                 headers: {
                     'Authorization': `Basic ${fetchAppAuth}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
+                    'Content-Type': 'application/xml',
+                    'Accept': 'application/xml'
                 }
             }
         );
@@ -231,11 +238,16 @@ app.post('/api/create-fetchapp-order', async (req, res) => {
             data: fetchAppResponse.data
         });
     } catch (error) {
-        console.error('FetchApp order error:', error.response?.data || error.message);
+        const resp = error.response;
+        console.error('FetchApp error:', {
+            status: resp?.status,
+            statusText: resp?.statusText,
+            data: resp?.data || error.message
+        });
         res.status(500).json({
             success: false,
             message: 'Failed to create FetchApp order',
-            error: error.response?.data || error.message
+            error: resp?.data || error.message
         });
     }
 });
@@ -301,23 +313,31 @@ await axios.post(
     const lastName = nameParts.slice(1).join(' ') || 'Customer';
 
     const fetchAuth = Buffer.from(`${FETCHAPP_KEY}:${FETCHAPP_TOKEN}`).toString('base64');
+    
+    const xml2 = `<?xml version="1.0" encoding="UTF-8"?>
+<order>
+  <vendor_id>${escXml(reference)}</vendor_id>
+  <first_name>${escXml(firstName)}</first_name>
+  <last_name>${escXml(lastName)}</last_name>
+  <email>${escXml(email)}</email>
+  <currency>${escXml(currency || 'NGN')}</currency>
+  <send_email>true</send_email>
+  <order_items>
+    <order_item>
+      <sku>${escXml(PRODUCT_SKU)}</sku>
+      <quantity>1</quantity>
+    </order_item>
+  </order_items>
+</order>`;
+
     await axios.post(
-        `${FETCHAPP_URL}/api/v2/orders`,
-        {
-            order: {
-                vendor_id: reference,
-                first_name: firstName,
-                last_name: lastName,
-                email: email,
-                order_items: [{ sku: PRODUCT_SKU }],
-                send_email: true
-            }
-        },
+        `${FETCHAPP_URL}/api/v2/orders/create.xml`,
+        xml2,
         {
             headers: {
                 Authorization: `Basic ${fetchAuth}`,
-                'Content-Type': 'application/json',
-                Accept: 'application/json'
+                'Content-Type': 'application/xml',
+                Accept: 'application/xml'
             }
         }
     );
@@ -407,7 +427,12 @@ app.post('/api/webhook/paystack', (req, res) => {
                 ipAddress,
                 country
             }).catch(err => {
-                console.error('Webhook processing error:', err.response?.data || err.message);
+                const resp = err.response;
+                console.error('Webhook processing error:', {
+                    status: resp?.status,
+                    statusText: resp?.statusText,
+                    data: resp?.data || err.message
+                });
             });
         }
 
