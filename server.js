@@ -19,7 +19,12 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const FETCHAPP_KEY = process.env.FETCHAPP_KEY;
 const FETCHAPP_TOKEN = process.env.FETCHAPP_TOKEN;
 const FETCHAPP_URL = process.env.FETCHAPP_URL; // e.g., https://yourhandle.fetchapp.com
-const PRODUCT_SKU = process.env.PRODUCT_SKU; // Your product SKU in FetchApp
+const PRODUCT_SKU = process.env.PRODUCT_SKU; // (unused now that we're not calling FetchApp)
+const MAILERSEND_API_TOKEN = process.env.MAILERSEND_API_TOKEN;
+const MAILERSEND_FROM_EMAIL = process.env.MAILERSEND_FROM_EMAIL;
+const MAILERSEND_FROM_NAME = process.env.MAILERSEND_FROM_NAME || 'Learnlist';
+const DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://learnlist.fetchapp.com/permalink/6c088fc7';
+const COURSE_TITLE = process.env.COURSE_TITLE || 'Your Course';
 
 // HTML escape helper for Telegram HTML parse_mode
 const esc = (s = '') => String(s)
@@ -255,7 +260,57 @@ app.post('/api/create-fetchapp-order', async (req, res) => {
 // --- Idempotency cache for processed references (in-memory) ---
 const processedReferences = new Set();
 
-// --- Shared processor: verify (if needed), send Telegram, create FetchApp order ---
+// MailerSend helper function
+async function sendDownloadEmailMailerSend({ fullName, email, downloadUrl, reference }) {
+  if (!MAILERSEND_API_TOKEN || !MAILERSEND_FROM_EMAIL) {
+    console.warn('MailerSend is not configured — email skipped.');
+    return;
+  }
+  const subject = `${COURSE_TITLE}: Your download link (Order ${reference})`;
+  const safeName = (fullName || 'there').trim();
+  const html = `
+  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;line-height:1.6;color:#111">
+    <h2 style="margin:0 0 12px">Payment confirmed ✅</h2>
+    <p>Dear ${safeName},</p>
+    <p>Thanks for your purchase of <strong>${COURSE_TITLE}</strong>. Your download link is below:</p>
+    <p>
+      <a href="${downloadUrl}" 
+         style="background:#1a56db;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none;display:inline-block">
+        Download your course
+      </a>
+    </p>
+    <p>If the button above doesn't work, copy &amp; paste this link:<br>
+      <a href="${downloadUrl}">${downloadUrl}</a>
+    </p>
+    <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+    <p style="font-size:13px;color:#555">Order ref: <strong>${reference}</strong></p>
+    <p style="font-size:12px;color:#777">This is a transactional email sent automatically after your purchase.</p>
+  </div>`.trim();
+  const text = [
+    `Payment confirmed`,
+    ``,
+    `Dear ${safeName},`,
+    `Thanks for your purchase of ${COURSE_TITLE}.`,
+    `Download link: ${downloadUrl}`,
+    ``,
+    `Order ref: ${reference}`,
+  ].join('\n');
+  await axios.post('https://api.mailersend.com/v1/email', {
+    from: { email: MAILERSEND_FROM_EMAIL, name: MAILERSEND_FROM_NAME },
+    to: [{ email, name: safeName }],
+    subject,
+    text,
+    html
+  }, {
+    headers: {
+      Authorization: `Bearer ${MAILERSEND_API_TOKEN}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    }
+  });
+}
+
+// --- Shared processor: verify (if needed), send Telegram, send download email via MailerSend ---
 async function handleSuccessfulPayment({
     reference,
     email,
@@ -306,41 +361,13 @@ await axios.post(
   }
 );
 
-
-    // 2) Create FetchApp order (sends email with download link automatically)
-    const nameParts = (fullName || '').trim().split(' ');
-    const firstName = nameParts[0] || 'Customer';
-    const lastName = nameParts.slice(1).join(' ') || 'Customer';
-
-    const fetchAuth = Buffer.from(`${FETCHAPP_KEY}:${FETCHAPP_TOKEN}`).toString('base64');
-    
-    const xml2 = `<?xml version="1.0" encoding="UTF-8"?>
-<order>
-  <vendor_id>${escXml(reference)}</vendor_id>
-  <first_name>${escXml(firstName)}</first_name>
-  <last_name>${escXml(lastName)}</last_name>
-  <email>${escXml(email)}</email>
-  <currency>${escXml(currency || 'NGN')}</currency>
-  <send_email>true</send_email>
-  <order_items>
-    <order_item>
-      <sku>${escXml(PRODUCT_SKU)}</sku>
-      <quantity>1</quantity>
-    </order_item>
-  </order_items>
-</order>`;
-
-    await axios.post(
-        `${FETCHAPP_URL}/api/v2/orders/create.xml`,
-        xml2,
-        {
-            headers: {
-                Authorization: `Basic ${fetchAuth}`,
-                'Content-Type': 'application/xml',
-                Accept: 'application/xml'
-            }
-        }
-    );
+    // 2) Send the download email via MailerSend (trial domain)
+    await sendDownloadEmailMailerSend({
+      fullName,
+      email,
+      downloadUrl: DOWNLOAD_URL,
+      reference
+    });
 
     processedReferences.add(reference);
     return { alreadyProcessed: false };
