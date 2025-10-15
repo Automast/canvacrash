@@ -203,14 +203,11 @@ async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
       return { skipped: true };
     }
 
-    const [first_name, ...rest] = String(fullName || '').trim().split(' ');
-    const last_name = rest.join(' ') || '';
-    
-    // Prepare payload for Sender.net API
+    // Prepare payload for Sender.net API (use full name as first_name for simplicity)
     const payload = {
       email,
-      first_name,
-      last_name,
+      first_name: fullName || 'Customer',
+      last_name: '',
       groups: [SENDER_GROUP_ID],
       trigger_automation: true, // This will trigger the welcome email automation
       tags: ['customer', 'paystack', gclid ? `gclid:${gclid}` : 'gclid:none']
