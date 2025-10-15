@@ -2,8 +2,17 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-const { SMTPClient } = require('emailjs');
 require('dotenv').config();
+
+// Dynamic import emailjs
+let SMTPClient;
+async function loadEmailJS() {
+  if (!SMTPClient) {
+    const emailjs = await import('emailjs');
+    SMTPClient = emailjs.SMTPClient;
+  }
+  return SMTPClient;
+}
 
 const app = express();
 
@@ -44,7 +53,8 @@ async function testSMTPConnection() {
   console.log('==========================================\n');
 
   try {
-    const client = new SMTPClient({
+    const ClientClass = await loadEmailJS();
+    const client = new ClientClass({
       user: process.env.SMTP_USER,
       password: process.env.SMTP_PASS,
       host: process.env.SMTP_HOST || 'smtp.zoho.com',
@@ -82,7 +92,8 @@ async function sendDownloadEmailSMTP({ fullName, email, downloadUrl, reference, 
   console.log(`   Reference: ${reference}`);
   
   try {
-    const client = new SMTPClient({
+    const ClientClass = await loadEmailJS();
+    const client = new ClientClass({
       user: process.env.SMTP_USER,
       password: process.env.SMTP_PASS,
       host: process.env.SMTP_HOST || 'smtp.zoho.com',
