@@ -216,7 +216,7 @@ async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
       email,
       firstname: finalName,  // Changed from first_name to firstname
       lastname: '',          // Changed from last_name to lastname
-      groups: [SENDER_GROUP_ID],
+      groups: [SENDER_GROUP_ID],  // Try with groups first
       trigger_automation: true, // This will trigger the welcome email automation
       tags: ['customer', 'paystack', gclid ? `gclid:${gclid}` : 'gclid:none']
     };
@@ -239,7 +239,15 @@ async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
     console.log('✅ SENDER.NET SUCCESS!');
     console.log(`   Status: ${response.status} ${response.statusText}`);
     console.log(`   Response: ${JSON.stringify(response.data)}`);
-    console.log(`   Subscriber added to group: ${SENDER_GROUP_ID}`);
+    console.log(`   Subscriber added with ID: ${response.data?.data?.id}`);
+    
+    // Check if groups were assigned in the response
+    if (response.data?.data && !response.data.data.groups) {
+      console.log('⚠️  WARNING: No groups shown in response. Group assignment might have failed.');
+      console.log(`   Please check your Sender.net dashboard to confirm "${SENDER_GROUP_ID}" group exists.`);
+      console.log(`   If the group exists, you might need to use the group ID instead of group name.`);
+    }
+    
     console.log(`   Welcome automation should trigger automatically\n`);
     
     return { success: true, data: response.data };
