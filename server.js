@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
@@ -16,14 +17,9 @@ const PORT = process.env.PORT || 3000;
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const FETCHAPP_KEY = process.env.FETCHAPP_KEY;
-const FETCHAPP_TOKEN = process.env.FETCHAPP_TOKEN;
-const FETCHAPP_URL = process.env.FETCHAPP_URL; // e.g., https://yourhandle.fetchapp.com
-const PRODUCT_SKU = process.env.PRODUCT_SKU; // (unused now that we're not calling FetchApp)
-const MAILERSEND_API_TOKEN = process.env.MAILERSEND_API_TOKEN;
-const MAILERSEND_FROM_EMAIL = process.env.MAILERSEND_FROM_EMAIL;
-const MAILERSEND_FROM_NAME = process.env.MAILERSEND_FROM_NAME || 'Learnlist';
-const DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://learnlist.fetchapp.com/permalink/6c088fc7';
+
+// Course details
+const DOWNLOAD_URL = 'https://learnlist.fetchapp.com/permalink/6c088fc7';
 const COURSE_TITLE = process.env.COURSE_TITLE || 'Your Course';
 
 // HTML escape helper for Telegram HTML parse_mode
@@ -32,12 +28,70 @@ const esc = (s = '') => String(s)
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;');
 
-// XML escape helper for FetchApp v2 XML payloads
-const escXml = (s = '') => String(s)
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;');
+// Helper to parse boolean strings
+function bool(v) { 
+  return String(v).toLowerCase() === 'true'; 
+}
 
+// SMTP email sender using Nodemailer
+async function sendDownloadEmailSMTP({ fullName, email, downloadUrl, reference, courseTitle }) {
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: bool(process.env.SMTP_SECURE || 'true'), // true for 465, false for 587
+    auth: { 
+      user: process.env.SMTP_USER, 
+      pass: process.env.SMTP_PASS 
+    }
+  });
+
+  const safeName = (fullName || 'there').trim();
+  const subject = `${courseTitle}: Your download link (Order ${reference})`;
+
+  const html = `
+  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;line-height:1.6;color:#111">
+    <h2 style="margin:0 0 12px">Payment confirmed ✅</h2>
+    <p>Dear ${safeName},</p>
+    <p>Thanks for your purchase of <strong>${courseTitle}</strong>. Your download link is below:</p>
+    <p>
+      <a href="${downloadUrl}" 
+         style="background:#1a56db;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none;display:inline-block">
+        Download your course
+      </a>
+    </p>
+    <p>If the button above doesn't work, copy &amp; paste this link:<br>
+      <a href="${downloadUrl}">${downloadUrl}</a>
+    </p>
+    <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+    <p style="font-size:13px;color:#555">Order ref: <strong>${reference}</strong></p>
+    <p style="font-size:12px;color:#777">This is a transactional email sent automatically after your purchase.</p>
+  </div>`.trim();
+
+  const text = [
+    `Payment confirmed`,
+    ``,
+    `Dear ${safeName},`,
+    `Thanks for your purchase of ${courseTitle}.`,
+    `Download link: ${downloadUrl}`,
+    ``,
+    `Order ref: ${reference}`,
+  ].join('\n');
+
+  await transporter.sendMail({
+    from: { 
+      name: process.env.FROM_NAME || 'Learnlist', 
+      address: process.env.FROM_EMAIL 
+    },
+    to: [{ name: safeName, address: email }],
+    subject,
+    text,
+    html,
+    headers: {
+      'X-Entity-Ref-ID': reference,       // helps threading
+      'X-Transactional': 'true'           // hint this is transactional
+    }
+  });
+}
 
 // Initialize Paystack transaction
 app.post('/api/initialize-payment', async (req, res) => {
@@ -148,42 +202,41 @@ app.post('/api/send-telegram-notification', async (req, res) => {
     try {
         const { fullName, email, gclid, amount, reference, country, ip } = req.body;
 
-// Format message for easy Google Ads upload (Telegram HTML)
-const message = [
-  '🎉 <b>NEW CONVERSION</b> 🎉',
-  '',
-  '<b>Customer Details:</b>',
-  `Full Name: ${esc(fullName)}`,
-  `Email: ${esc(email)}`,
-  '',
-  '<b>Transaction Details:</b>',
-  `Amount: ${esc('₦' + String(amount))}`,
-  `Reference: ${esc(reference)}`,
-  `Country: ${esc(country || 'NG')}`,
-  `IP Address: ${esc(ip || 'N/A')}`,
-  '',
-  '<b>Google Ads Data:</b>',
-  `GCLID: ${esc(gclid || 'direct')}`,
-  `Conversion Time: ${esc(new Date().toISOString())}`,
-  '',
-  '<b>For Google Ads Upload:</b>',
-  `<pre>GCLID: ${esc(gclid || 'direct')}
+        // Format message for easy Google Ads upload (Telegram HTML)
+        const message = [
+            '🎉 <b>NEW CONVERSION</b> 🎉',
+            '',
+            '<b>Customer Details:</b>',
+            `Full Name: ${esc(fullName)}`,
+            `Email: ${esc(email)}`,
+            '',
+            '<b>Transaction Details:</b>',
+            `Amount: ${esc('₦' + String(amount))}`,
+            `Reference: ${esc(reference)}`,
+            `Country: ${esc(country || 'NG')}`,
+            `IP Address: ${esc(ip || 'N/A')}`,
+            '',
+            '<b>Google Ads Data:</b>',
+            `GCLID: ${esc(gclid || 'direct')}`,
+            `Conversion Time: ${esc(new Date().toISOString())}`,
+            '',
+            '<b>For Google Ads Upload:</b>',
+            `<pre>GCLID: ${esc(gclid || 'direct')}
 Conversion Name: Purchase
 Conversion Time: ${esc(new Date().toISOString())}
 Conversion Value: ${esc(String(amount))}
 Conversion Currency: NGN</pre>`
-].join('\n');
+        ].join('\n');
 
-await axios.post(
-  `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-  {
-    chat_id: TELEGRAM_CHAT_ID,
-    text: message,
-    parse_mode: 'HTML',
-    disable_web_page_preview: true
-  }
-);
-
+        await axios.post(
+            `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+            {
+                chat_id: TELEGRAM_CHAT_ID,
+                text: message,
+                parse_mode: 'HTML',
+                disable_web_page_preview: true
+            }
+        );
 
         res.json({ success: true, message: 'Telegram notification sent' });
     } catch (error) {
@@ -196,121 +249,10 @@ await axios.post(
     }
 });
 
-// Create FetchApp order and send email
-app.post('/api/create-fetchapp-order', async (req, res) => {
-    try {
-        const { fullName, email, reference } = req.body;
-
-        // Split name into first and last
-        const nameParts = fullName.trim().split(' ');
-        const firstName = nameParts[0] || 'Customer';
-        const lastName = nameParts.slice(1).join(' ') || 'Customer';
-
-        // Create FetchApp order (using v2 API with XML)
-        const fetchAppAuth = Buffer.from(`${FETCHAPP_KEY}:${FETCHAPP_TOKEN}`).toString('base64');
-
-        const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<order>
-  <vendor_id>${escXml(reference)}</vendor_id>
-  <first_name>${escXml(firstName)}</first_name>
-  <last_name>${escXml(lastName)}</last_name>
-  <email>${escXml(email)}</email>
-  <currency>NGN</currency>
-  <send_email>true</send_email>
-  <order_items>
-    <order_item>
-      <sku>${escXml(PRODUCT_SKU)}</sku>
-      <quantity>1</quantity>
-    </order_item>
-  </order_items>
-</order>`;
-
-        const fetchAppResponse = await axios.post(
-            `${FETCHAPP_URL}/api/v2/orders/create.xml`,
-            xml,
-            {
-                headers: {
-                    'Authorization': `Basic ${fetchAppAuth}`,
-                    'Content-Type': 'application/xml',
-                    'Accept': 'application/xml'
-                }
-            }
-        );
-
-        res.json({
-            success: true,
-            message: 'FetchApp order created and email sent',
-            data: fetchAppResponse.data
-        });
-    } catch (error) {
-        const resp = error.response;
-        console.error('FetchApp error:', {
-            status: resp?.status,
-            statusText: resp?.statusText,
-            data: resp?.data || error.message
-        });
-        res.status(500).json({
-            success: false,
-            message: 'Failed to create FetchApp order',
-            error: resp?.data || error.message
-        });
-    }
-});
-
 // --- Idempotency cache for processed references (in-memory) ---
 const processedReferences = new Set();
 
-// MailerSend helper function
-async function sendDownloadEmailMailerSend({ fullName, email, downloadUrl, reference }) {
-  if (!MAILERSEND_API_TOKEN || !MAILERSEND_FROM_EMAIL) {
-    console.warn('MailerSend is not configured — email skipped.');
-    return;
-  }
-  const subject = `${COURSE_TITLE}: Your download link (Order ${reference})`;
-  const safeName = (fullName || 'there').trim();
-  const html = `
-  <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;line-height:1.6;color:#111">
-    <h2 style="margin:0 0 12px">Payment confirmed ✅</h2>
-    <p>Dear ${safeName},</p>
-    <p>Thanks for your purchase of <strong>${COURSE_TITLE}</strong>. Your download link is below:</p>
-    <p>
-      <a href="${downloadUrl}" 
-         style="background:#1a56db;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none;display:inline-block">
-        Download your course
-      </a>
-    </p>
-    <p>If the button above doesn't work, copy &amp; paste this link:<br>
-      <a href="${downloadUrl}">${downloadUrl}</a>
-    </p>
-    <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-    <p style="font-size:13px;color:#555">Order ref: <strong>${reference}</strong></p>
-    <p style="font-size:12px;color:#777">This is a transactional email sent automatically after your purchase.</p>
-  </div>`.trim();
-  const text = [
-    `Payment confirmed`,
-    ``,
-    `Dear ${safeName},`,
-    `Thanks for your purchase of ${COURSE_TITLE}.`,
-    `Download link: ${downloadUrl}`,
-    ``,
-    `Order ref: ${reference}`,
-  ].join('\n');
-  await axios.post('https://api.mailersend.com/v1/email', {
-    from: { email: MAILERSEND_FROM_EMAIL, name: MAILERSEND_FROM_NAME },
-    to: [{ email, name: safeName }],
-    subject,
-    text,
-    html
-  }, {
-    headers: {
-      Authorization: `Bearer ${MAILERSEND_API_TOKEN}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json'
-    }
-  });
-}
-
-// --- Shared processor: verify (if needed), send Telegram, send download email via MailerSend ---
+// --- Shared processor: verify (if needed), send Telegram, send email ---
 async function handleSuccessfulPayment({
     reference,
     email,
@@ -325,48 +267,49 @@ async function handleSuccessfulPayment({
         return { alreadyProcessed: true };
     }
 
-   // 1) Send Telegram notification (HTML + escaped values)
-const message = [
-  '🎉 <b>NEW CONVERSION</b> 🎉',
-  '',
-  '<b>Customer Details:</b>',
-  `Full Name: ${esc(fullName)}`,
-  `Email: ${esc(email)}`,
-  '',
-  '<b>Transaction Details:</b>',
-  `Amount: ${esc(`${currency} ${amountNaira}`)}`,
-  `Reference: ${esc(reference)}`,
-  `Country: ${esc(country)}`,
-  `IP Address: ${esc(ipAddress)}`,
-  '',
-  '<b>Google Ads Data:</b>',
-  `GCLID: ${esc(gclid)}`,
-  `Conversion Time: ${esc(new Date().toISOString())}`,
-  '',
-  '<b>For Google Ads Upload:</b>',
-  `<pre>GCLID: ${esc(gclid)}
+    // 1) Send Telegram notification (HTML + escaped values)
+    const message = [
+        '🎉 <b>NEW CONVERSION</b> 🎉',
+        '',
+        '<b>Customer Details:</b>',
+        `Full Name: ${esc(fullName)}`,
+        `Email: ${esc(email)}`,
+        '',
+        '<b>Transaction Details:</b>',
+        `Amount: ${esc(`${currency} ${amountNaira}`)}`,
+        `Reference: ${esc(reference)}`,
+        `Country: ${esc(country)}`,
+        `IP Address: ${esc(ipAddress)}`,
+        '',
+        '<b>Google Ads Data:</b>',
+        `GCLID: ${esc(gclid)}`,
+        `Conversion Time: ${esc(new Date().toISOString())}`,
+        '',
+        '<b>For Google Ads Upload:</b>',
+        `<pre>GCLID: ${esc(gclid)}
 Conversion Name: Purchase
 Conversion Time: ${esc(new Date().toISOString())}
 Conversion Value: ${esc(String(amountNaira))}
 Conversion Currency: ${esc(currency)}</pre>`
-].join('\n');
+    ].join('\n');
 
-await axios.post(
-  `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-  {
-    chat_id: TELEGRAM_CHAT_ID,
-    text: message,
-    parse_mode: 'HTML',
-    disable_web_page_preview: true
-  }
-);
+    await axios.post(
+        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+        {
+            chat_id: TELEGRAM_CHAT_ID,
+            text: message,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+        }
+    );
 
-    // 2) Send the download email via MailerSend (trial domain)
-    await sendDownloadEmailMailerSend({
-      fullName,
-      email,
-      downloadUrl: DOWNLOAD_URL,
-      reference
+    // 2) Send the download email via Zoho SMTP (Nodemailer)
+    await sendDownloadEmailSMTP({
+        fullName,
+        email,
+        downloadUrl: DOWNLOAD_URL,
+        reference,
+        courseTitle: COURSE_TITLE
     });
 
     processedReferences.add(reference);
@@ -469,7 +412,6 @@ app.post('/api/webhook/paystack', (req, res) => {
         return res.sendStatus(500);
     }
 });
-
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
