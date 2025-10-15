@@ -196,6 +196,8 @@ async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
   console.log(`   Email: ${email}`);
   console.log(`   Name: ${fullName}`);
   console.log(`   GCLID: ${gclid}`);
+  console.log(`   Debug - fullName type: ${typeof fullName}`);
+  console.log(`   Debug - fullName value: "${fullName}"`);
   
   try {
     if (!SENDER_API_KEY || !SENDER_GROUP_ID) {
@@ -203,17 +205,25 @@ async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
       return { skipped: true };
     }
 
+    // Ensure we have a valid name
+    const safeName = String(fullName || '').trim();
+    const finalName = safeName || 'Customer';
+    
+    console.log(`   Debug - final name to use: "${finalName}"`);
+
     // Prepare payload for Sender.net API (use full name as first_name for simplicity)
     const payload = {
       email,
-      first_name: fullName || 'Customer',
+      first_name: finalName,
       last_name: '',
       groups: [SENDER_GROUP_ID],
       trigger_automation: true, // This will trigger the welcome email automation
       tags: ['customer', 'paystack', gclid ? `gclid:${gclid}` : 'gclid:none']
     };
 
+    console.log(`   Debug - payload being sent:`, JSON.stringify(payload, null, 2));
     console.log(`   Sending to Sender.net API...`);
+    
     const response = await axios.post(
       'https://api.sender.net/v2/subscribers',
       payload,
