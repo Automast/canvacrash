@@ -211,11 +211,11 @@ async function addSubscriberToSender({ email, fullName, gclid = 'direct' }) {
     
     console.log(`   Debug - final name to use: "${finalName}"`);
 
-    // Prepare payload for Sender.net API (use full name as first_name for simplicity)
+    // Prepare payload for Sender.net API (use full name as firstname for simplicity)
     const payload = {
       email,
-      first_name: finalName,
-      last_name: '',
+      firstname: finalName,  // Changed from first_name to firstname
+      lastname: '',          // Changed from last_name to lastname
       groups: [SENDER_GROUP_ID],
       trigger_automation: true, // This will trigger the welcome email automation
       tags: ['customer', 'paystack', gclid ? `gclid:${gclid}` : 'gclid:none']
