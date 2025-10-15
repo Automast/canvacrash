@@ -33,9 +33,9 @@ function bool(v) {
   return String(v).toLowerCase() === 'true'; 
 }
 
-// SMTP email sender using Nodemailer
-async function sendDownloadEmailSMTP({ fullName, email, downloadUrl, reference, courseTitle }) {
-  const transporter = nodemailer.createTransport({
+// Create SMTP transporter (reusable)
+function createTransporter() {
+  return nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 465),
     secure: bool(process.env.SMTP_SECURE || 'true'), // true for 465, false for 587
@@ -44,11 +44,47 @@ async function sendDownloadEmailSMTP({ fullName, email, downloadUrl, reference, 
       pass: process.env.SMTP_PASS 
     }
   });
+}
 
-  const safeName = (fullName || 'there').trim();
-  const subject = `${courseTitle}: Your download link (Order ${reference})`;
+// Test SMTP connection on startup
+async function testSMTPConnection() {
+  console.log('\n📧 Testing SMTP connection...');
+  console.log('==========================================');
+  console.log(`Host: ${process.env.SMTP_HOST}`);
+  console.log(`Port: ${process.env.SMTP_PORT || 465}`);
+  console.log(`User: ${process.env.SMTP_USER}`);
+  console.log(`Secure: ${bool(process.env.SMTP_SECURE || 'true')}`);
+  console.log('==========================================\n');
 
-  const html = `
+  try {
+    const transporter = createTransporter();
+    await transporter.verify();
+    console.log('✅ SMTP CONNECTION SUCCESSFUL!');
+    console.log('✅ Email service is ready to send emails\n');
+    return true;
+  } catch (error) {
+    console.error('❌ SMTP CONNECTION FAILED!');
+    console.error('❌ Error:', error.message);
+    console.error('\n⚠️  Please check your SMTP credentials in .env file');
+    console.error('⚠️  Server will continue running but emails will NOT be sent!\n');
+    return false;
+  }
+}
+
+// SMTP email sender using Nodemailer
+async function sendDownloadEmailSMTP({ fullName, email, downloadUrl, reference, courseTitle }) {
+  console.log('\n📨 Attempting to send email...');
+  console.log(`   To: ${email}`);
+  console.log(`   Name: ${fullName}`);
+  console.log(`   Reference: ${reference}`);
+  
+  try {
+    const transporter = createTransporter();
+    
+    const safeName = (fullName || 'there').trim();
+    const subject = `${courseTitle}: Your download link (Order ${reference})`;
+
+    const html = `
   <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;line-height:1.6;color:#111">
     <h2 style="margin:0 0 12px">Payment confirmed ✅</h2>
     <p>Dear ${safeName},</p>
@@ -67,30 +103,53 @@ async function sendDownloadEmailSMTP({ fullName, email, downloadUrl, reference, 
     <p style="font-size:12px;color:#777">This is a transactional email sent automatically after your purchase.</p>
   </div>`.trim();
 
-  const text = [
-    `Payment confirmed`,
-    ``,
-    `Dear ${safeName},`,
-    `Thanks for your purchase of ${courseTitle}.`,
-    `Download link: ${downloadUrl}`,
-    ``,
-    `Order ref: ${reference}`,
-  ].join('\n');
+    const text = [
+      `Payment confirmed`,
+      ``,
+      `Dear ${safeName},`,
+      `Thanks for your purchase of ${courseTitle}.`,
+      `Download link: ${downloadUrl}`,
+      ``,
+      `Order ref: ${reference}`,
+    ].join('\n');
 
-  await transporter.sendMail({
-    from: { 
-      name: process.env.FROM_NAME || 'Learnlist', 
-      address: process.env.FROM_EMAIL 
-    },
-    to: [{ name: safeName, address: email }],
-    subject,
-    text,
-    html,
-    headers: {
-      'X-Entity-Ref-ID': reference,       // helps threading
-      'X-Transactional': 'true'           // hint this is transactional
+    const info = await transporter.sendMail({
+      from: { 
+        name: process.env.FROM_NAME || 'Learnlist', 
+        address: process.env.FROM_EMAIL 
+      },
+      to: [{ name: safeName, address: email }],
+      subject,
+      text,
+      html,
+      headers: {
+        'X-Entity-Ref-ID': reference,       // helps threading
+        'X-Transactional': 'true'           // hint this is transactional
+      }
+    });
+
+    console.log('✅ EMAIL SENT SUCCESSFULLY!');
+    console.log(`   Message ID: ${info.messageId}`);
+    console.log(`   Response: ${info.response}`);
+    console.log(`   Accepted: ${info.accepted?.join(', ') || 'N/A'}`);
+    if (info.rejected?.length > 0) {
+      console.log(`   Rejected: ${info.rejected.join(', ')}`);
     }
-  });
+    console.log('');
+    
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('❌ EMAIL SENDING FAILED!');
+    console.error(`   Error: ${error.message}`);
+    if (error.code) {
+      console.error(`   Error Code: ${error.code}`);
+    }
+    if (error.command) {
+      console.error(`   Command: ${error.command}`);
+    }
+    console.error('');
+    throw error; // Re-throw to handle in calling function
+  }
 }
 
 // Initialize Paystack transaction
@@ -263,57 +322,76 @@ async function handleSuccessfulPayment({
     ipAddress = 'N/A',
     country = 'NG'
 }) {
+    console.log('\n🔄 Processing payment...');
+    console.log(`   Reference: ${reference}`);
+    console.log(`   Customer: ${fullName} (${email})`);
+    console.log(`   Amount: ${currency} ${amountNaira}`);
+    
     if (processedReferences.has(reference)) {
+        console.log('⚠️  Payment already processed (duplicate prevented)');
         return { alreadyProcessed: true };
     }
 
-    // 1) Send Telegram notification (HTML + escaped values)
-    const message = [
-        '🎉 <b>NEW CONVERSION</b> 🎉',
-        '',
-        '<b>Customer Details:</b>',
-        `Full Name: ${esc(fullName)}`,
-        `Email: ${esc(email)}`,
-        '',
-        '<b>Transaction Details:</b>',
-        `Amount: ${esc(`${currency} ${amountNaira}`)}`,
-        `Reference: ${esc(reference)}`,
-        `Country: ${esc(country)}`,
-        `IP Address: ${esc(ipAddress)}`,
-        '',
-        '<b>Google Ads Data:</b>',
-        `GCLID: ${esc(gclid)}`,
-        `Conversion Time: ${esc(new Date().toISOString())}`,
-        '',
-        '<b>For Google Ads Upload:</b>',
-        `<pre>GCLID: ${esc(gclid)}
+    try {
+        // 1) Send Telegram notification (HTML + escaped values)
+        console.log('\n📱 Sending Telegram notification...');
+        const message = [
+            '🎉 <b>NEW CONVERSION</b> 🎉',
+            '',
+            '<b>Customer Details:</b>',
+            `Full Name: ${esc(fullName)}`,
+            `Email: ${esc(email)}`,
+            '',
+            '<b>Transaction Details:</b>',
+            `Amount: ${esc(`${currency} ${amountNaira}`)}`,
+            `Reference: ${esc(reference)}`,
+            `Country: ${esc(country)}`,
+            `IP Address: ${esc(ipAddress)}`,
+            '',
+            '<b>Google Ads Data:</b>',
+            `GCLID: ${esc(gclid)}`,
+            `Conversion Time: ${esc(new Date().toISOString())}`,
+            '',
+            '<b>For Google Ads Upload:</b>',
+            `<pre>GCLID: ${esc(gclid)}
 Conversion Name: Purchase
 Conversion Time: ${esc(new Date().toISOString())}
 Conversion Value: ${esc(String(amountNaira))}
 Conversion Currency: ${esc(currency)}</pre>`
-    ].join('\n');
+        ].join('\n');
 
-    await axios.post(
-        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
-            chat_id: TELEGRAM_CHAT_ID,
-            text: message,
-            parse_mode: 'HTML',
-            disable_web_page_preview: true
-        }
-    );
+        await axios.post(
+            `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+            {
+                chat_id: TELEGRAM_CHAT_ID,
+                text: message,
+                parse_mode: 'HTML',
+                disable_web_page_preview: true
+            }
+        );
+        console.log('✅ Telegram notification sent successfully');
 
-    // 2) Send the download email via Zoho SMTP (Nodemailer)
-    await sendDownloadEmailSMTP({
-        fullName,
-        email,
-        downloadUrl: DOWNLOAD_URL,
-        reference,
-        courseTitle: COURSE_TITLE
-    });
+        // 2) Send the download email via Zoho SMTP (Nodemailer)
+        const emailResult = await sendDownloadEmailSMTP({
+            fullName,
+            email,
+            downloadUrl: DOWNLOAD_URL,
+            reference,
+            courseTitle: COURSE_TITLE
+        });
 
-    processedReferences.add(reference);
-    return { alreadyProcessed: false };
+        processedReferences.add(reference);
+        console.log('✅ Payment processing completed successfully!\n');
+        
+        return { 
+            alreadyProcessed: false, 
+            emailSent: true,
+            messageId: emailResult.messageId 
+        };
+    } catch (error) {
+        console.error('❌ Error during payment processing:', error.message);
+        throw error;
+    }
 }
 
 // --- New: Orchestrator endpoint the frontend calls from paycomplete.html ---
@@ -353,10 +431,15 @@ app.post('/api/process-order', async (req, res) => {
         return res.json({
             success: true,
             message: result.alreadyProcessed ? 'Already processed' : 'Processed',
+            emailSent: result.emailSent || false
         });
     } catch (error) {
         console.error('process-order error:', error.response?.data || error.message);
-        return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+        return res.status(500).json({ 
+            success: false, 
+            message: 'Server error', 
+            error: error.message 
+        });
     }
 });
 
@@ -369,13 +452,15 @@ app.post('/api/webhook/paystack', (req, res) => {
             .digest('hex');
 
         if (hash !== req.headers['x-paystack-signature']) {
+            console.log('❌ Invalid webhook signature');
             return res.sendStatus(400);
         }
 
         const event = req.body;
         if (event?.event === 'charge.success') {
             const ref = event.data?.reference;
-            console.log('Payment successful:', ref);
+            console.log('\n🔔 Webhook received: Payment successful');
+            console.log(`   Reference: ${ref}`);
 
             // Pull details from event payload
             const email = event.data?.customer?.email || event.data?.authorization?.email;
@@ -422,8 +507,21 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-    console.log(`Health check: http://localhost:${PORT}/api/health`);
+// Start server with SMTP test
+async function startServer() {
+    // Test SMTP connection before starting
+    await testSMTPConnection();
+    
+    app.listen(PORT, () => {
+        console.log('==========================================');
+        console.log(`🚀 Server is running on port ${PORT}`);
+        console.log(`🏥 Health check: http://localhost:${PORT}/api/health`);
+        console.log('==========================================\n');
+    });
+}
+
+// Start the server
+startServer().catch(error => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
 });
