@@ -269,6 +269,7 @@ async function handleSuccessfulPayment({
   console.log(`   Reference: ${reference}`);
   console.log(`   Customer: ${fullName} (${email})`);
   console.log(`   Amount: ${currency} ${amountNaira}`);
+  console.log(`🔍 DEBUG: handleSuccessfulPayment received fullName: "${fullName}"`);
   
   if (processedReferences.has(reference)) {
     console.log('⚠️  Payment already processed (duplicate prevented)');
@@ -310,6 +311,7 @@ Conversion Currency: ${esc(currency)}</pre>`
     console.log('✅ Telegram notification sent successfully');
 
     // 2) Add to Sender.net so the Welcome email (with download link) is sent automatically
+    console.log(`🔍 DEBUG: About to call addSubscriberToSender with fullName: "${fullName}"`);
     const senderResult = await addSubscriberToSender({ email, fullName, gclid });
 
     processedReferences.add(reference);
@@ -330,7 +332,14 @@ Conversion Currency: ${esc(currency)}</pre>`
 app.post('/api/process-order', async (req, res) => {
     try {
         const { email, fullName, reference, gclid, ipAddress, country } = req.body;
+        
+        // Debug logging
+        console.log('\n🔍 DEBUG: Received request body:', JSON.stringify(req.body, null, 2));
+        console.log(`🔍 DEBUG: Extracted fullName: "${fullName}"`);
+        console.log(`🔍 DEBUG: Extracted email: "${email}"`);
+        
         if (!email || !fullName || !reference) {
+            console.log('❌ Missing required fields:', { email: !!email, fullName: !!fullName, reference: !!reference });
             return res.status(400).json({ success: false, message: 'Missing email, fullName or reference' });
         }
 
@@ -348,6 +357,8 @@ app.post('/api/process-order', async (req, res) => {
         // Convert kobo -> naira
         const amountNaira = Math.round(Number(data.amount) || 0) / 100;
         const currency = data.currency || 'NGN';
+
+        console.log(`🔍 DEBUG: About to call handleSuccessfulPayment with fullName: "${fullName}"`);
 
         const result = await handleSuccessfulPayment({
             reference,
@@ -403,6 +414,13 @@ app.post('/api/webhook/paystack', (req, res) => {
             const currency = event.data?.currency || 'NGN';
             const ipAddress = event.data?.ip_address || req.ip;
             const country = event.data?.customer?.country || 'NG';
+
+            // Debug webhook data
+            console.log('\n🔍 WEBHOOK DEBUG:');
+            console.log(`   Event metadata:`, JSON.stringify(event.data?.metadata, null, 2));
+            console.log(`   Customer data:`, JSON.stringify(event.data?.customer, null, 2));
+            console.log(`   Extracted fullName: "${fullName}"`);
+            console.log(`   Extracted email: "${email}"`);
 
             // Fire and forget; don't block the webhook response
             handleSuccessfulPayment({
