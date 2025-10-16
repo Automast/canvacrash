@@ -40,18 +40,23 @@ let mailerSend = null;
 async function testMailerSendConnection() {
   console.log('\n📧 Testing MailerSend connection...');
   console.log('==========================================');
-  console.log(`API Key: ${MAILERSEND_API_KEY ? 'Present' : 'Missing'}`);
-  console.log(`From Email: ${FROM_EMAIL}`);
-  console.log(`From Name: ${FROM_NAME}`);
+  console.log(`API Key: ${MAILERSEND_API_KEY ? 'Present (' + MAILERSEND_API_KEY.substring(0, 8) + '...)' : 'Missing'}`);
+  console.log(`From Email: ${FROM_EMAIL || 'Missing'}`);
+  console.log(`From Name: ${FROM_NAME || 'Missing'}`);
   console.log('==========================================\n');
 
   try {
     if (!MAILERSEND_API_KEY) {
-      throw new Error('MAILERSEND_API_KEY is required');
+      throw new Error('MAILERSEND_API_KEY is required - get it from MailerSend dashboard');
     }
 
     if (!FROM_EMAIL) {
       throw new Error('FROM_EMAIL is required and must match your verified domain');
+    }
+
+    // Check if API key format looks correct
+    if (!MAILERSEND_API_KEY.startsWith('mlsn.')) {
+      console.warn('⚠️  WARNING: API key should start with "mlsn." - please verify your API key');
     }
 
     // Initialize MailerSend client
@@ -59,15 +64,21 @@ async function testMailerSendConnection() {
       apiKey: MAILERSEND_API_KEY,
     });
 
-    console.log('✅ MAILERSEND CONNECTION CONFIGURED!');
+    console.log('✅ MAILERSEND CLIENT INITIALIZED!');
     console.log('✅ Email service is ready to send emails');
-    console.log('⚠️  Make sure your domain is verified in MailerSend dashboard\n');
+    console.log('⚠️  Make sure your domain is verified in MailerSend dashboard');
+    console.log(`⚠️  Make sure FROM_EMAIL (${FROM_EMAIL}) matches your verified domain\n`);
     return true;
   } catch (error) {
-    console.error('❌ MAILERSEND CONNECTION FAILED!');
+    console.error('❌ MAILERSEND SETUP FAILED!');
     console.error('❌ Error:', error.message);
-    console.error('\n⚠️  Please check your MailerSend credentials in .env file');
-    console.error('⚠️  Server will continue running but emails will NOT be sent!\n');
+    console.error('\n📋 SETUP CHECKLIST:');
+    console.error('   1. Create account at https://mailersend.com');
+    console.error('   2. Add and verify your domain');
+    console.error('   3. Generate API token from domain settings');
+    console.error('   4. Set MAILERSEND_API_KEY in .env file');
+    console.error('   5. Set FROM_EMAIL to match verified domain');
+    console.error('\n⚠️  Server will continue running but emails will NOT be sent!\n');
     return false;
   }
 }
@@ -127,30 +138,54 @@ async function sendDownloadEmailMailerSend({ fullName, email, downloadUrl, refer
       .setHtml(htmlContent)
       .setText(textContent);
 
-    // Send the email
+    // Send the email - MailerSend returns response with .body property
     const response = await mailerSend.email.send(emailParams);
 
     console.log('✅ EMAIL SENT SUCCESSFULLY!');
-    console.log(`   Response Status: ${response.status}`);
-    console.log(`   Message ID: ${response.headers['x-message-id'] || 'N/A'}`);
+    console.log(`   Status: ${response.status || 'N/A'}`);
+    console.log(`   Status Text: ${response.statusText || 'N/A'}`);
+    
+    // MailerSend returns message ID in response headers
+    const messageId = response.headers ? response.headers['x-message-id'] : null;
+    if (messageId) {
+      console.log(`   Message ID: ${messageId}`);
+    }
+    
+    // Log response body if available
+    if (response.body) {
+      console.log(`   Response Body:`, response.body);
+    }
+    
     console.log('');
     
     return { 
       success: true, 
-      messageId: response.headers['x-message-id'] || response.statusText 
+      messageId: messageId || 'sent',
+      status: response.status,
+      response: response
     };
   } catch (error) {
     console.error('❌ EMAIL SENDING FAILED!');
-    console.error(`   Error: ${error.message}`);
     
-    // Handle MailerSend specific errors
-    if (error.response) {
-      console.error(`   Status: ${error.response.status}`);
-      console.error(`   Status Text: ${error.response.statusText}`);
-      if (error.response.data) {
-        console.error(`   Response Data:`, error.response.data);
-      }
+    // MailerSend errors have .body property
+    if (error.body) {
+      console.error(`   Error Body:`, error.body);
     }
+    
+    if (error.message) {
+      console.error(`   Error Message: ${error.message}`);
+    }
+    
+    if (error.status) {
+      console.error(`   Status: ${error.status}`);
+    }
+    
+    if (error.statusText) {
+      console.error(`   Status Text: ${error.statusText}`);
+    }
+    
+    // Log the full error for debugging
+    console.error(`   Full Error:`, error);
     
     console.error('');
     throw error; // Re-throw to handle in calling function
@@ -515,6 +550,52 @@ app.get('/api/health', (req, res) => {
             fromEmail: !!FROM_EMAIL
         }
     });
+});
+
+// Test email endpoint for debugging
+app.post('/api/test-email', async (req, res) => {
+    try {
+        const { email, name } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email is required'
+            });
+        }
+
+        console.log('\n🧪 Testing email sending...');
+        console.log(`   Test Email: ${email}`);
+        console.log(`   Test Name: ${name || 'Test User'}`);
+
+        const result = await sendDownloadEmailMailerSend({
+            fullName: name || 'Test User',
+            email: email,
+            downloadUrl: 'https://example.com/test-download',
+            reference: 'TEST_' + Date.now(),
+            courseTitle: 'Test Course'
+        });
+
+        res.json({
+            success: true,
+            message: 'Test email sent successfully',
+            result: result
+        });
+
+    } catch (error) {
+        console.error('Test email failed:', error);
+        
+        res.status(500).json({
+            success: false,
+            message: 'Test email failed',
+            error: {
+                message: error.message,
+                body: error.body,
+                status: error.status,
+                statusText: error.statusText
+            }
+        });
+    }
 });
 
 // Start server with MailerSend test
