@@ -24,7 +24,7 @@ const FROM_EMAIL = process.env.FROM_EMAIL; // Must match verified domain
 const FROM_NAME = process.env.FROM_NAME || 'Learnlist';
 
 // Course details
-const DOWNLOAD_URL = 'https://learnlist.fetchapp.com/permalink/6c088fc7';
+const DOWNLOAD_URL = 'http://learnlist.info/course.html';
 const COURSE_TITLE = process.env.COURSE_TITLE || 'Your Course';
 
 // HTML escape helper for Telegram HTML parse_mode
